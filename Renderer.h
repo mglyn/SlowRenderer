@@ -5,38 +5,7 @@
 #include "Thread.h"
 #include "Canvas.h"
 
-struct Setting {
-	enum Mod {
-		PhongShading,
-		zColoring,
-		framework
-	};
-	Mod mod = PhongShading;
-	bool backfaceCulling = true;
-
-	std::wstring debugInfo() const {
-		wchar_t str[512];
-		swprintf(str, 512,
-			LR"(
-backface culling: %s [ B ]
-color mod: %s [ 1/2/3 ]
-)",
-backfaceCulling ? L"enabled" : L"disabled",
-			[this]()->const wchar_t* {
-				if (mod == Setting::Mod::PhongShading)
-					return { L"1.Blinn-Phong shading" };
-				else if (mod == Setting::Mod::zColoring)
-					return { L"2.depth" };
-				else if (mod == Setting::Mod::framework)
-					return { L"3.framework" };
-				return {};
-			}());
-
-		return std::wstring(str);
-	}
-};
-
-struct TempFragBuffer {  //ÁÙÊ±ÏñËØ»º³å
+struct TempFragBuffer {  //ï¿½ï¿½Ê±ï¿½ï¿½ï¿½Ø»ï¿½ï¿½ï¿½
 	static constexpr int maxBatchSize = 4096;
 	std::vector<Fragment>& dst;
 	std::vector<float>& depthBuf;
@@ -81,8 +50,8 @@ class FragmentShader {
 	const Math::vec3& amb_light;
 
 public:
-	FragmentShader(const Matirial& mtl, 
-		const Camera& camera, 
+	FragmentShader(const Matirial& mtl,
+		const Camera& camera,
 		const std::vector<Light>& light,
 		const Math::vec3& amb_light) :
 		mtl(mtl), camera(camera), light(light), amb_light(amb_light) {}
@@ -101,27 +70,28 @@ public:
 			Math::vec3 h = (l + v).normalized();//half
 
 			ambient = ambient + mtl.ka.cwiseProduct(amb_light);
-			diffuse = diffuse + mtl.kd.cwiseProduct(li.intensity) * (max(0.f, f.wNormal.dot(l)) / r_2);
-			specular = specular + mtl.ks.cwiseProduct(li.intensity) * (powf(max(0.f, f.wNormal.dot(h)), 300) / r_2);
+			diffuse = diffuse + mtl.kd.cwiseProduct(li.intensity) * ((std::max)(0.f, f.wNormal.dot(l)) / r_2);
+			specular = specular + mtl.ks.cwiseProduct(li.intensity) * (powf((std::max)(0.f, f.wNormal.dot(h)), 300) / r_2);
 		}
 		return (diffuse + specular + ambient).clamped(0.f, 1.f, 0.f, 1.f);
 	}
 };
 
 class Renderer {
+	const Setting& set;
+
 	Math::mat4 M, invTransM, PV;
 
-	//¶¥µãÐÅÏ¢
+	//ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ï¢
 	std::vector<Math::vec3> wPos;
 	std::vector<Math::vec4> cPos;
 	std::vector<Math::vec3> wNormal;
 
-	//ÏñËØÐÅÏ¢
+	//ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ï¢
 	std::vector<float> depthBuf;
 	std::vector<Fragment> fragment;
 
 	//threads
-	int numThreads = std::thread::hardware_concurrency();
 	ThreadPool threads;
 	std::mutex mtx;
 
@@ -134,22 +104,24 @@ class Renderer {
 	void clear(Canvas& canvas) {
 		auto clearTask = [&](int st, int ed) {
 			for (int y = st; y < ed; y++) {
-				for (int x = 0; x < canvas.width; x++) {
-					int pid = y * canvas.width + x;
-					canvas.drawPixel(pid, canvas.bgColor);
+				for (int x = 0; x < set.width; x++) {
+					int pid = y * set.width + x;
+					canvas.drawPixel(pid, set.bgColor);
 					depthBuf[pid] = -1e8;
 				}
 			}
 			};
 
-		int num = canvas.height;
-		int blockSize = max(min(num / (4 * numThreads), 512), 1);
+		int num = set.height;
+		int blockSize = (std::max)((std::min)(num / (8 * set.numCalculatingThreads), 512), 1);
 
-		for (int i = 0; i < canvas.height; i += blockSize) {
-			threads.addTask(clearTask, i, min(i + blockSize, canvas.height));
+		for (int i = 0; i < num; i += blockSize) {
+			threads.addTask(clearTask, i, (std::min)(i + blockSize, num));
 		}
 
 		fragment.clear();
+
+		threads.barrier();
 	}
 
 	void vertexProcess(const Model& model) {
@@ -170,10 +142,10 @@ class Renderer {
 			};
 
 		int num = model.mesh.mPos.size();
-		int blockSize = max(min(512, num / (8 * numThreads)), 1);
+		int blockSize = std::clamp(num / (8 * set.numCalculatingThreads), 32, 512);
 
 		for (int i = 0; i < num; i += blockSize) {
-			threads.addTask(vertexProcessTask1, i, min(i + blockSize, num));
+			threads.addTask(vertexProcessTask1, i, (std::min)(i + blockSize, num));
 		}
 
 		auto vertexProcessTask2 = [&](int st, int ed) {
@@ -186,10 +158,10 @@ class Renderer {
 			};
 
 		num = model.mesh.mNormal.size();
-		blockSize = max(min(512, num / (8 * numThreads)), 1);
+		blockSize = std::clamp(num / (8 * set.numCalculatingThreads), 32, 512);
 
 		for (int i = 0; i < num; i += blockSize) {
-			threads.addTask(vertexProcessTask2, i, min(i + blockSize, num));
+			threads.addTask(vertexProcessTask2, i, (std::min)(i + blockSize, num));
 		}
 
 		threads.barrier();
@@ -233,7 +205,7 @@ class Renderer {
 		return triangles;
 	}
 
-	void setup_rasterize_triangle(Canvas& canvas, const Camera& camera, const Model& model, const Setting& setting) {
+	void setup_rasterize_triangle(Canvas& canvas, const Camera& camera, const Model& model) {
 		auto setup_rasterize_triangle_task = [&](int st, int ed) {
 			TempFragBuffer buf(fragment, depthBuf, mtx);
 
@@ -249,7 +221,7 @@ class Renderer {
 				}
 
 				//2 clip origin triangle
-				std::vector<Triangle> triangles = clipTriangle(t, camera.zNear);
+				std::vector<Triangle> triangles = clipTriangle(t, set.zNear);
 
 				//3 apply perspective division and viewport transform to get screen space coord
 				for (auto& t : triangles) {
@@ -258,26 +230,26 @@ class Renderer {
 						t.ver[i].cPos[1] /= t.ver[i].cPos[3];
 					}
 					for (int i = 0; i < 3; i++) {
-						t.ver[i].sPos[0] = 0.5f * canvas.width * (t.ver[i].cPos[0] + 1.f);
-						t.ver[i].sPos[1] = 0.5f * canvas.height * (t.ver[i].cPos[1] + 1.f);
+						t.ver[i].sPos[0] = 0.5f * set.width * (t.ver[i].cPos[0] + 1.f);
+						t.ver[i].sPos[1] = 0.5f * set.height * (t.ver[i].cPos[1] + 1.f);
 					}
 
 					float area = (t.ver[0].sPos[0] - t.ver[1].sPos[0]) * (t.ver[1].sPos[1] - t.ver[2].sPos[1]) -
 						(t.ver[1].sPos[0] - t.ver[2].sPos[0]) * (t.ver[0].sPos[1] - t.ver[1].sPos[1]);
 
-					if (setting.backfaceCulling && area < 0) continue;	//backface culling
+					if (set.backfaceCulling && area < 0) continue;	//backface culling
 
-					if (setting.mod == Setting::Mod::framework) drawTriangleFrame(canvas, t);
+					if (set.mod == Setting::Mod::framework) canvas.drawTriangleFrame(t);
 					else halfSpaceRasterize(canvas, t, area, buf);
 				}
 			}
 			};
 
 		int num = model.mesh.tInfo.size();
-		int blockSize = max(min(512, num / (8 * numThreads)), 1);
+		int blockSize = std::clamp(num / (8 * set.numCalculatingThreads), 32, 512);
 
 		for (int i = 0; i < num; i += blockSize) {
-			threads.addTask(setup_rasterize_triangle_task, i, min(i + blockSize, num));
+			threads.addTask(setup_rasterize_triangle_task, i, (std::min)(i + blockSize, num));
 		}
 
 		threads.barrier();
@@ -285,10 +257,10 @@ class Renderer {
 
 	void halfSpaceRasterize(Canvas& canvas, Triangle& t, float area, TempFragBuffer& buf) {
 		//bounding box
-		int lbound = min(max(min(min(t.ver[0].sPos[0], t.ver[1].sPos[0]), t.ver[2].sPos[0]), 0), canvas.width - 1);
-		int rbound = min(max(max(max(t.ver[0].sPos[0], t.ver[1].sPos[0]), t.ver[2].sPos[0]), 0), canvas.width - 1);
-		int bbound = min(max(min(min(t.ver[0].sPos[1], t.ver[1].sPos[1]), t.ver[2].sPos[1]), 0), canvas.height - 1);
-		int tbound = min(max(max(max(t.ver[0].sPos[1], t.ver[1].sPos[1]), t.ver[2].sPos[1]), 0), canvas.height - 1);
+		int lbound = (std::min)((std::max)((std::min)((std::min)(t.ver[0].sPos[0], t.ver[1].sPos[0]), t.ver[2].sPos[0]), 0.f), float(set.width - 1));
+		int rbound = (std::min)((std::max)((std::max)((std::max)(t.ver[0].sPos[0], t.ver[1].sPos[0]), t.ver[2].sPos[0]), 0.f), float(set.width - 1));
+		int bbound = (std::min)((std::max)((std::min)((std::min)(t.ver[0].sPos[1], t.ver[1].sPos[1]), t.ver[2].sPos[1]), 0.f), float(set.height - 1));
+		int tbound = (std::min)((std::max)((std::max)((std::max)(t.ver[0].sPos[1], t.ver[1].sPos[1]), t.ver[2].sPos[1]), 0.f), float(set.height - 1));
 		if (lbound > rbound)return;
 
 		for (int y = bbound; y <= tbound; y++) {
@@ -307,12 +279,12 @@ class Renderer {
 				}
 
 				if (!inside) {
-					if (met) break;
+					if (met) break;     //little optimize: break when the triangle has already passed
 					else continue;
 				}
 				met = true;
 
-				int pid = y * canvas.width + x;
+				int pid = y * set.width + x;
 
 				//corrected interpolation 
 				float alpha = S[1] / area, beta = S[2] / area, gama = S[0] / area;
@@ -331,20 +303,9 @@ class Renderer {
 		}
 	}
 
-	void drawTriangleFrame(Canvas& canvas, const Triangle& t) {
-		auto st0 = t.ver[0].sPos, st1 = t.ver[1].sPos, st2 = t.ver[2].sPos;
-		auto ed0 = t.ver[1].sPos, ed1 = t.ver[2].sPos, ed2 = t.ver[0].sPos;
-		if (canvas.Cohen_Sutherland(st0[0], st0[1], ed0[0], ed0[1]))
-			canvas.Bresenham(st0[0], st0[1], ed0[0], ed0[1]);
-		if (canvas.Cohen_Sutherland(st1[0], st1[1], ed1[0], ed1[1]))
-			canvas.Bresenham(st1[0], st1[1], ed1[0], ed1[1]);
-		if (canvas.Cohen_Sutherland(st2[0], st2[1], ed2[0], ed2[1]))
-			canvas.Bresenham(st2[0], st2[1], ed2[0], ed2[1]);
-	}
-
-	void fragmentProcess(Canvas& canvas, const FragmentShader& fragmentShader, const Setting& setting) {
+	void fragmentProcess(Canvas& canvas, const FragmentShader& fragmentShader) {
 		std::function<void(int, int)> fragmentShadingTask;
-		if (setting.mod == Setting::Mod::PhongShading) {
+		if (set.mod == Setting::Mod::PhongShading) {
 			fragmentShadingTask = [&](int st, int ed) {
 				for (int id = st; id < ed; id++) {
 					auto& f = fragment[id];
@@ -354,7 +315,7 @@ class Renderer {
 				}
 				};
 		}
-		else if (setting.mod == Setting::Mod::zColoring) {
+		else if (set.mod == Setting::Mod::zColoring) {
 			fragmentShadingTask = [&](int st, int ed) {
 				for (int id = st; id < ed; id++) {
 					auto& f = fragment[id];
@@ -367,52 +328,83 @@ class Renderer {
 		}
 
 		int num = fragment.size();
-		int blockSize = max(min(512, num / (8 * numThreads)), 1);
+		int blockSize = std::clamp(num / (8 * set.numCalculatingThreads), 32, 512);
 
 		for (int i = 0; i < fragment.size(); i += blockSize) {
-			threads.addTask(fragmentShadingTask, i, (int)min(i + blockSize, fragment.size()));
+			threads.addTask(fragmentShadingTask, i, (int)(std::min)(i + blockSize, (int)fragment.size()));
 		}
 
 		threads.barrier();
 	}
 
 public:
-	Renderer() :threads(numThreads) {}
+	Renderer(const Setting& setting) :threads(setting.numCalculatingThreads), set(setting) {}
 
 	void draw(Canvas& canvas,
-		const Camera& camera, 
-		const Setting& setting,
+		const Camera& camera,
 		const Model& model,
 		const std::vector<Light>& light,
-		const Math::vec3& amb_light) 
+		const Math::vec3& amb_light)
 	{
-		//1.Çå¿Õ»º³å
-		depthBuf.resize(canvas.width * canvas.height);
+		//1.init
+		depthBuf.resize(set.width * set.height);
 		clear(canvas);
 
-		//2.¸üÐÂ¾ØÕó
+		//2.ï¿½ï¿½ï¿½Â¾ï¿½ï¿½ï¿½
 		updateMatrix(camera, model);
 
-		//3.¶¥µã±ä»»
+		//3.ï¿½ï¿½ï¿½ï¿½ä»»
 		vertexProcess(model);
 
-		//4.×é×°¡¢¹âÕ¤»¯Èý½ÇÐÎ
-		setup_rasterize_triangle(canvas, camera, model, setting);
+		//4.ï¿½ï¿½×°ï¿½ï¿½ï¿½ï¿½Õ¤ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+		setup_rasterize_triangle(canvas, camera, model);
 
-		//5.äÖÈ¾ÏñËØ
+		//5.ï¿½ï¿½È¾ï¿½ï¿½ï¿½ï¿½
 		FragmentShader fragmentShader(model.mtl, camera, light, amb_light);
-		fragmentProcess(canvas, fragmentShader, setting);
+		fragmentProcess(canvas, fragmentShader);
 	}
 
-	std::wstring debugInfo() {
-		wchar_t str[512];
-		swprintf(str, 512,
-LR"(
-threads: %d
-)",
-			numThreads);
+	void renderingLoop(Canvas& canvas,
+		const Camera& camera,
+		const Model& model,
+		const std::vector<Light>& light,
+		const Math::vec3& amb_light,
+		const bool& shutdown) 
+	{
+		int frameCnt = 0, fps = 0;
+		std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
+		while (!shutdown) {
 
-		return std::wstring(str);
+			//1.
+			draw(canvas, camera, model, light, amb_light);
+
+			//2.calculate fps
+			frameCnt++;
+			std::chrono::duration<double, std::milli> delta = std::chrono::system_clock::now() - now;
+			if (delta.count() > 500) {
+				now = std::chrono::system_clock::now();
+				fps = 2 * frameCnt;
+				frameCnt = 0;
+			}
+
+			//3.blend pixels to char
+			canvas.blend();
+
+			//4.debug info
+			std::string debug
+				= "\nfps: " + std::to_string(fps) + "\n" +
+				"[ F ] for more info";
+			if (set.showInfo) {
+				debug +=
+					set.debugInfo() +
+					camera.debugInfo() +
+					model.debugInfo();
+			}
+			canvas.blendDebugInfo(debug);
+
+			//5.show buffer to screen
+			canvas.display();
+		}
 	}
 };
 

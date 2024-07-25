@@ -2,6 +2,7 @@
 #include <initializer_list>
 #include <algorithm>
 #include <concepts>
+#include <cmath>
 
 namespace Math {
 	inline const float eps = 1e-6f;
@@ -34,15 +35,15 @@ namespace Math {
 	class vec {
 		Tx v[len];
 	public:
-		vec<len, Tx>() {
+		vec() {
 			for (int i = 0; i < len; i++)
 				v[i] = 0;
 		}
-		vec<len, Tx>(const vec<len, Tx>& x) {
+		vec(const vec<len, Tx>& x) {
 			for (int i = 0; i < len; i++)
 				v[i] = x.v[i];
 		}
-		vec<len, Tx>(const std::initializer_list<Tx>& x) {
+		vec(const std::initializer_list<Tx>& x) {
 			auto it = x.begin();
 			for (int i = 0; i < len; i++) {
 				if (it != x.end()) {
@@ -121,7 +122,7 @@ namespace Math {
 			for (int i = 0; i < len; i++) ret.v[i] *= t;
 			return ret;
 		}
-		vec<len, Tx> clamped(Tx sl, Tx sr, Tx tl, Tx tr) const {
+		vec<len, Tx> clamped(Tx sl, Tx sr, Tx tl, Tx tr) const { //[sl, sr] to [tl, tr]
 			vec<len, Tx> ret;
 			for (int i = 0; i < len; i++) {
 				if (v[i] > sr)ret.v[i] = tr;
@@ -143,21 +144,21 @@ namespace Math {
 	class mat {
 		Tx m[size][size];
 	public:
-		mat<size, Tx>() {
+		mat() {
 			for (int i = 0; i < size; i++) {
 				for (int j = 0; j < size; j++) {
 					m[i][j] = 0;
 				}
 			}
 		}
-		mat<size, Tx>(const mat<size, Tx>& B) {
+		mat(const mat<size, Tx>& B) {
 			for (int i = 0; i < size; i++) {
 				for (int j = 0; j < size; j++) {
 					m[i][j] = B[i][j];
 				}
 			}
 		}
-		mat<size, Tx>(const std::initializer_list<float>& x) {
+		mat(const std::initializer_list<float>& x) {
 			auto it = x.begin();
 			for (int i = 0; i < size; i++) {
 				for (int j = 0; j < size; j++) {

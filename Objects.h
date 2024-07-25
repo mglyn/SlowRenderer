@@ -23,16 +23,16 @@ enum Actions :int {
 
 class Object {
 protected:
-	Math::vec3 wPos;	//Î»ÖÃ
-	Math::vec3 g;		//³¯Ïò
-	Math::vec3 up;		//ÏòÉÏ·½Ïò
+	Math::vec3 wPos;	//Î»ï¿½ï¿½
+	Math::vec3 g;		//ï¿½ï¿½ï¿½ï¿½
+	Math::vec3 up;		//ï¿½ï¿½ï¿½Ï·ï¿½ï¿½ï¿½
 
 	int state;
-	float speed;			
+	float speed;
 	float rspeed;
 public:
 	Object(Math::vec3 wPos, Math::vec3 g, Math::vec3 up, int state, float speed, float rspeed) :
-		wPos(wPos), g(g), up(up), state(state), speed(speed), rspeed(rspeed){}
+		wPos(wPos), g(g), up(up), state(state), speed(speed), rspeed(rspeed) {}
 
 	void setAttitude(Math::vec3 wPos_, Math::vec3 g_, Math::vec3 up_) {
 		wPos = wPos_;
@@ -45,12 +45,16 @@ public:
 		else state |= op;
 	}
 
+	void toggleState(int op) {
+		state ^= op;
+	}
+
 	void updateAtiitude() {
 		if (state == Actions::none) return;
 
 		auto Rodrigues = [](const Math::vec3& k, const Math::vec3& v, float theta)->Math::vec3 {
 			return (v * cosf(theta) + k.cross(v) * sinf(theta) + k * (k.dot(v) * (1.f - cosf(theta)))).normalized();
-		};
+			};
 
 		Math::vec3 Actions = Math::vec3{ g[0], 0, g[2] }.normalized();
 		Math::vec3 vActions = Actions.cross(Math::vec3{ 0,1,0 });
@@ -81,23 +85,23 @@ public:
 		}
 	}
 
-	std::wstring debugInfo() const {
-		wchar_t str[512];
+	std::string debugInfo() const {
+		char str[512];
 
-		std::wstring strState;
-		if (state & moveForward)strState += L" moveForward";
-		if (state & moveLeft)strState += L" moveLeft";
-		if (state & moveBack)strState += L" moveBack";
-		if (state & moveRight)strState += L" moveRight";
-		if (state & moveUp)strState += L" moveUp";
-		if (state & moveDown)strState += L" moveDown";
-		if (state & turnUp)strState += L" turnUp";
-		if (state & turnLeft)strState += L" turnLeft";
-		if (state & turnDown)strState += L" turnDown";
-		if (state & turnRight)strState += L" turnRight";
+		std::string strState;
+		if (state & moveForward)strState += " moveForward";
+		if (state & moveLeft)strState += " moveLeft";
+		if (state & moveBack)strState += " moveBack";
+		if (state & moveRight)strState += " moveRight";
+		if (state & moveUp)strState += " moveUp";
+		if (state & moveDown)strState += " moveDown";
+		if (state & turnUp)strState += " turnUp";
+		if (state & turnLeft)strState += " turnLeft";
+		if (state & turnDown)strState += " turnDown";
+		if (state & turnRight)strState += " turnRight";
 
-		swprintf(str, 512,
-			LR"(attitude:
+		sprintf(str,
+			R"(attitude:
     pos: %.2f %.2f %.2f
     face to: %.2f %.2f %.2f
     up: %.2f %.2f %.2f
@@ -108,7 +112,7 @@ g[0], g[1], g[2],
 up[0], up[1], up[2],
 strState.c_str());
 
-		return std::wstring(str);
+		return std::string(str);
 	}
 };
 
@@ -116,19 +120,16 @@ class Camera :public Object {
 	friend class FragmentShader;
 	friend class Renderer;
 
-	float fov = Math::pi / 2.f;
-	float aspect = 16.f / 9.f;
-	float zNear = -0.1f;
-	float zFar = -50.f;
+	const Setting& set;
 
 public:
-	Camera(Object object): Object(object) {}
+	Camera(Object object, const Setting& setting) : Object(object), set(setting) {}
 
 	Math::mat4 calcMatrixP() const {
-		float n = zNear, f = zFar;
-		float t = abs(n) * tanf(fov / 2.f);
+		float n = set.zNear, f = set.zFar;
+		float t = abs(n) * tanf(set.fov / 2.f);
 		float b = -t;
-		float r = t * aspect;
+		float r = t * set.aspect;
 		float l = -r;
 		/*viewToProjection
 		Math::mat4 squeeze:		Math::mat4 translate:		Math::mat4 scale:
@@ -163,39 +164,24 @@ public:
 			0,		0,		0,		1
 		};
 	}
-
-	std::wstring debugInfo() const {
-		wchar_t str[512];
-		swprintf(str, 512,
-			LR"(
-camera attributes:
-FOV: %.2f
-aspect: %.2f
-zNear: %.2f
-zFar: %.2f
-)",
-fov, aspect, zNear, zFar);
-
-		return std::wstring(str) + Object::debugInfo();
-	}
 };
 
 class Model :public Object {
 	friend class FragmentShader;
 	friend class Renderer;
 
-	std::wstring name;
+	std::string name;
 	Mesh mesh;
 	Matirial mtl;
 
 	bool noNormal = false;
 	bool noUV = false;
 
-	std::vector<std::wstring> seprateLine(const std::wstring& str) {
-		std::vector<std::wstring> vec;
-		std::wstring tmp;
+	std::vector<std::string> seprateLine(const std::string& str) {
+		std::vector<std::string> vec;
+		std::string tmp;
 		for (int i = 0; i < str.length(); i++) {
-			if (str[i] != L' ') {
+			if (str[i] != ' ') {
 				tmp += str[i];
 			}
 			else {
@@ -207,11 +193,11 @@ class Model :public Object {
 		return vec;
 	};
 
-	std::vector<int> seprate(const std::wstring& str) {
+	std::vector<int> seprate(const std::string& str) {
 		std::vector<int> vec(3, 0);
 
-		int p = str.find_first_of(L"/");
-		int q = str.find_last_of(L"/");
+		int p = str.find_first_of("/");
+		int q = str.find_last_of("/");
 
 		if (p < 0) {
 			vec[0] = std::stoi(str) - 1;
@@ -225,7 +211,7 @@ class Model :public Object {
 		return vec;
 	};
 
-	void genNormals() { //¸ù¾ÝÈý½ÇÐÎÃæ»ý¼ÓÈ¨Éú³É¶¥µã·¨Ïß
+	void genNormals() { //ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È¨ï¿½ï¿½ï¿½É¶ï¿½ï¿½ã·¨ï¿½ï¿½
 		std::vector<std::vector<Math::vec3>> adjFacesNormal;
 		adjFacesNormal.resize(mesh.mPos.size());
 
@@ -257,42 +243,42 @@ class Model :public Object {
 		}
 	}
 public:
-	Model(Object object, Matirial mtl): Object(object), mtl(mtl) {}
+	Model(Object object, Matirial mtl) : Object(object), mtl(mtl) {}
 
-	bool loadOBJ(const std::wstring& path, const std::wstring _name) {
-		std::wifstream ifs;
-		ifs.open(path + L"/" + _name);
+	bool loadOBJ(const std::string& path, const std::string _name) {
+		std::ifstream ifs;
+		ifs.open((path + "/" + _name).c_str());
 		if (!ifs.is_open())return false;
 
 		name = _name;
 
-		std::wstring str;
+		std::string str;
 		while (std::getline(ifs, str)) {
-			std::vector<std::wstring> vec = seprateLine(str);
+			std::vector<std::string> vec = seprateLine(str);
 			if (vec.empty())continue;
 
-			std::wstring mtl;
-			if (vec[0] == L"v") {
-				float x = _wtof(vec[1].c_str());
-				float y = _wtof(vec[2].c_str());
-				float z = _wtof(vec[3].c_str());
+			std::string mtl;
+			if (vec[0] == "v") {
+				float x = std::stof(vec[1].c_str());
+				float y = std::stof(vec[2].c_str());
+				float z = std::stof(vec[3].c_str());
 				mesh.mPos.push_back({ x, y, z });
 			}
-			else if (vec[0] == L"vt") {
-				float u = _wtof(vec[1].c_str());
-				float v = _wtof(vec[2].c_str());
+			else if (vec[0] == "vt") {
+				float u = std::stof(vec[1].c_str());
+				float v = std::stof(vec[2].c_str());
 				mesh.texCoord.push_back({ u, v });
 			}
-			else if (vec[0] == L"vn") {
-				float x = _wtof(vec[1].c_str());
-				float y = _wtof(vec[2].c_str());
-				float z = _wtof(vec[3].c_str());
+			else if (vec[0] == "vn") {
+				float x = std::stof(vec[1].c_str());
+				float y = std::stof(vec[2].c_str());
+				float z = std::stof(vec[3].c_str());
 				mesh.mNormal.push_back({ x, y, z });
 			}
-			else if (vec[0] == L"usemtl") {
+			else if (vec[0] == "usemtl") {
 				mtl = vec[1];
 			}
-			else if (vec[0] == L"f") {
+			else if (vec[0] == "f") {
 				if (vec.size() == 4) {
 					std::vector<int> posTexNormA = seprate(vec[1]);
 					std::vector<int> posTexNormB = seprate(vec[2]);
@@ -348,10 +334,10 @@ public:
 		return translate * rotation;
 	}
 
-	std::wstring debugInfo() const {
-		wchar_t str[512];
-		swprintf(str, 512,
-			LR"(
+	std::string debugInfo() const {
+		char str[512];
+		sprintf(str,
+			R"(
 model attributes:
 name: %s
 vertices: %llu
@@ -360,25 +346,11 @@ triangles: %llu
 )",
 name.c_str(),
 mesh.mPos.size(),
-mesh.mNormal.size(), noNormal ? L"(AutoGen)" : L"", 
+mesh.mNormal.size(), noNormal ? "(AutoGen)" : "",
 mesh.tInfo.size());
 
-		return std::wstring(str) + Object::debugInfo();
+		return std::string(str) + Object::debugInfo();
 	}
 };
 
-struct Timer {
-	std::chrono::time_point<std::chrono::steady_clock> start;
 
-	Timer() { start = std::chrono::steady_clock::now(); }
-
-	bool second() {
-		using namespace std::chrono;
-		bool timeOut = duration_cast<milliseconds>(steady_clock::now() - start).count() > 1000;
-		if (timeOut) {
-			start = std::chrono::steady_clock::now();
-			return true;
-		}
-		return false;
-	}
-};

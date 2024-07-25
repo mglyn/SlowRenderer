@@ -1,64 +1,50 @@
 #pragma once
 #include "Math.h"
-#include <windows.h>
 #include <string>
 
 class Canvas {
 	friend class Renderer;
-	//win32 draw
-	HDC memDC = nullptr;
-	HDC DC = nullptr;
-	HBITMAP bitMap = nullptr;
-	HGDIOBJ pen = nullptr;
 
-	int width, height;
-	Math::vec3 bgColor;
-	Math::vec3 textColor;
+	const Setting& set;
 
-	unsigned int* colorBuf;
+	unsigned int* buffer;
+	char* cBuffer;
+
+	ThreadPool threads;
+
+	int brightness = 1;
+	char brush[3][32] = {
+			{7, ' ','.',':','+','%','#','@'},
+			{18, ' ','.',',','^',':','-','+','a','b','c','d','w','f','$','&','%','#','@'},
+			{3, ' ','.',':'}
+	};
 
 public:
 
-	Canvas(int w, int h, HWND hWnd, Math::vec3 bgColor, Math::vec3 textColor) : 
-		width(w), height(h), bgColor(bgColor), textColor(textColor)
-	{
-		DC = GetDC(hWnd);
-		memDC = CreateCompatibleDC(DC);
-		pen = CreatePen(PS_SOLID, 1, 0);
-		pen = SelectObject(DC, pen);
-		SetBkColor(memDC, RGB(255 * bgColor[0], 255 * bgColor[1], 255 * bgColor[2]));
-		SetTextColor(memDC, RGB(255 * textColor[0], 255 * textColor[1], 255 * textColor[2]));
-
-		BITMAPINFO bi = { { sizeof(BITMAPINFOHEADER), w, h, 1, 32, BI_RGB,
-			(DWORD)w * h * 4, 0, 0, 0, 0 } };
-		bitMap = CreateDIBSection(memDC, &bi, DIB_RGB_COLORS, (void**)&colorBuf, 0, 0);
-
-		if (bitMap)SelectObject(memDC, bitMap);
-		else throw EXCEPTION_BREAKPOINT;
+	Canvas(const Setting& setting) :set(setting), threads(setting.numCalculatingThreads) {
+		buffer = new unsigned int[set.width * set.height](0);
+		cBuffer = new char[(set.width / set.cWidth + 1) * set.height / set.cHeight + 1]('\0');
 	}
 
 	~Canvas() {
-		DeleteDC(memDC);
-		DeleteObject(bitMap);
-		pen = SelectObject(DC, pen);
-		DeleteObject(pen);
-		DeleteDC(DC);
+		delete[] buffer;
+		delete[] cBuffer;
 	}
 
 	void drawPixel(int pid, const Math::vec3& color) {
-		colorBuf[pid] = RGB(255 * color[0], 255 * color[1], 255 * color[2]);
+		buffer[pid] = RGB(color[0] * 255, color[1] * 255, color[2] * 255);
 	}
 
 	bool Cohen_Sutherland(float& x0, float& y0, float& x1, float& y1) const {
 		const int LEFT = 1, RIGHT = 2, BOTTOM = 4, TOP = 8;
-		const float ymax = height - 1.f, xmax = width - 1.f;
+		const float ymax = set.height - 1.f, xmax = set.width - 1.f;
 		const float ymin = 0.f, xmin = 0.f;
 		auto encode = [this](float x, float y)->int {
 			int code = 0;
 			if (x < 0)code |= LEFT;
-			else if (x > width - 1.f)code |= RIGHT;
+			else if (x > set.width - 1.f)code |= RIGHT;
 			if (y < 0)code |= BOTTOM;
-			else if (y > height - 1.f)code |= TOP;
+			else if (y > set.height - 1.f)code |= TOP;
 			return code;
 			};
 
@@ -109,10 +95,10 @@ public:
 	}
 
 	void Bresenham(int x0, int y0, int x1, int y1) {
-		x0 = min(max(0, x0), width - 1);
-		x1 = min(max(0, x1), width - 1);
-		y0 = min(max(0, y0), height - 1);
-		y1 = min(max(0, y1), height - 1);
+		x0 = (std::min)((std::max)(0, x0), set.width - 1);
+		x1 = (std::min)((std::max)(0, x1), set.width - 1);
+		y0 = (std::min)((std::max)(0, y0), set.height - 1);
+		y1 = (std::min)((std::max)(0, y1), set.height - 1);
 		bool steep = abs(y1 - y0) > abs(x1 - x0);
 		if (steep) {
 			std::swap(x0, y0);
@@ -127,8 +113,8 @@ public:
 		int ystep = y0 < y1 ? 1 : -1;
 		int y = y0;
 		for (int x = x0; x <= x1; x++) {
-			if (steep)drawPixel(x * width + y, { 100,100,100 });
-			else drawPixel(y * width + x, { 100,100,100 });
+			if (steep)drawPixel(x * set.width + y, { 100,100,100 });
+			else drawPixel(y * set.width + x, { 100,100,100 });
 			error -= dy;
 			if (error < 0) {
 				y += ystep;
@@ -137,21 +123,63 @@ public:
 		}
 	}
 
-	std::wstring debugInfo() {
-		return L"\nresolution:" + std::to_wstring(width) + L"x" + std::to_wstring(height);
+	void drawTriangleFrame(const Triangle& t) {
+		auto st0 = t.ver[0].sPos, st1 = t.ver[1].sPos, st2 = t.ver[2].sPos;
+		auto ed0 = t.ver[1].sPos, ed1 = t.ver[2].sPos, ed2 = t.ver[0].sPos;
+		if (Cohen_Sutherland(st0[0], st0[1], ed0[0], ed0[1]))
+			Bresenham(st0[0], st0[1], ed0[0], ed0[1]);
+		if (Cohen_Sutherland(st1[0], st1[1], ed1[0], ed1[1]))
+			Bresenham(st1[0], st1[1], ed1[0], ed1[1]);
+		if (Cohen_Sutherland(st2[0], st2[1], ed2[0], ed2[1]))
+			Bresenham(st2[0], st2[1], ed2[0], ed2[1]);
 	}
 
-	void drawDebugInfo(const std::wstring& str) {
-		RECT rect;
-		rect.left = 16;
-		rect.top = 0;
-		rect.right = 400;
-		rect.bottom = 500;
+	void blend() {
+		auto blendTask = [&](int st, int ed) {
+			for (int cy = st; cy < ed; cy++) {
+				for (int cx = 0; cx < set.width / set.cWidth; cx++) {
+					
+					float val = 0;
+					for (int i = 0; i < set.cHeight; i++) {
+						for (int j = 0; j < set.cWidth; j++) {
 
-		DrawTextW(memDC, str.c_str(), str.length(), &rect, DT_LEFT | DT_TOP);
+							int y = cy * set.cHeight + i, x = cx * set.cWidth + j;
+							int pid = (set.height - (y + 1)) * set.width + x;
+							val += (GetRValue(buffer[pid]) + GetGValue(buffer[pid]) + GetBValue(buffer[pid]));
+						}
+					}
+
+					int level = val * brush[brightness][0] / 3.f / 256 / set.cHeight / set.cWidth;
+					cBuffer[cy * (set.width / set.cWidth + 1) + cx] = brush[brightness][level + 1];
+				}
+				cBuffer[cy * (set.width / set.cWidth + 1) + set.width / set.cWidth] = '\n';
+			}
+			};
+
+		int num = set.height / set.cHeight;
+		int blockSize = std::clamp(num / (8 * set.numCalculatingThreads), 32 / set.cHeight, 512 / set.cHeight);
+
+		for (int i = 0; i < num; i += blockSize) {
+			threads.addTask(blendTask, i, (std::min)(i + blockSize, num));
+		}
+
+		threads.barrier();
 	}
 
-	void update() const {
-		BitBlt(DC, 0, 0, width, height, memDC, 0, 0, SRCCOPY);
+	void blendDebugInfo(const std::string& str) {
+
+		int line = 0;
+		char* p = cBuffer + line++ * (set.width / set.cWidth + 1);
+		for (const char& c : str) {
+			if (c != '\n') *p++ = c;
+			else p = cBuffer + line++ * (set.width / set.cWidth + 1);
+			if (line >= set.height / set.cHeight)break;
+		}
 	}
-};
+
+	void display() {
+		COORD coord = { 0, 0 };
+		SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), coord);
+		fputs(cBuffer, stdout);
+	}
+};//178 x 50
