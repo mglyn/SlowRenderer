@@ -2,12 +2,16 @@
 CPU rendering
 
 
-### Microsoft Visual Studio Windows桌面应用程序 C++20
+### main Microsoft Visual Studio Windows桌面应用程序 C++20
+### ascii 控制台应用 C++20
 
- ## 效果图
+## 效果图
+### main
 ![](pics/dragon.png)
 ![](pics/manhattan.png)
 ![](pics/Fabricio%20Works%20Skeleton.png)
+### ascii
+![](pics/dog.png)
 
  ## 演示视频
  https://www.bilibili.com/video/BV1XQ4y1L7Qk/?vd_source=6d48c8dce1e2a6f3b5318760f3511c93#reply708398682
