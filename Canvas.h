@@ -5,7 +5,9 @@
 class Canvas {
 	friend class Renderer;
 
-	const Setting& set;
+	int w, h, cW, cH;
+	
+	Math::vec3 bgColor;
 
 	unsigned int* buffer;
 	char* cBuffer;
@@ -21,9 +23,14 @@ class Canvas {
 
 public:
 
-	Canvas(const Setting& setting) :set(setting), threads(setting.numCalculatingThreads) {
-		buffer = new unsigned int[set.width * set.height](0);
-		cBuffer = new char[(set.width / set.cWidth + 1) * set.height / set.cHeight + 1]('\0');
+	Canvas(int w, int h, int cW, int cH, int numThreads, Math::vec3 bgColor) :
+		w(w), h(h), cW(cW), cH(cH), threads(numThreads), bgColor(bgColor)
+	{
+		CONSOLE_CURSOR_INFO cursor_info = { 1, 0 };
+		SetConsoleCursorInfo(GetStdHandle(STD_OUTPUT_HANDLE), &cursor_info);
+
+		buffer = new unsigned int[w * h](0);
+		cBuffer = new char[(w/ cW + 1) * h / cH + 1]('\0');
 	}
 
 	~Canvas() {
@@ -37,14 +44,14 @@ public:
 
 	bool Cohen_Sutherland(float& x0, float& y0, float& x1, float& y1) const {
 		const int LEFT = 1, RIGHT = 2, BOTTOM = 4, TOP = 8;
-		const float ymax = set.height - 1.f, xmax = set.width - 1.f;
+		const float ymax = h - 1.f, xmax = w - 1.f;
 		const float ymin = 0.f, xmin = 0.f;
 		auto encode = [this](float x, float y)->int {
 			int code = 0;
 			if (x < 0)code |= LEFT;
-			else if (x > set.width - 1.f)code |= RIGHT;
+			else if (x > w - 1.f)code |= RIGHT;
 			if (y < 0)code |= BOTTOM;
-			else if (y > set.height - 1.f)code |= TOP;
+			else if (y > h - 1.f)code |= TOP;
 			return code;
 			};
 
@@ -95,10 +102,10 @@ public:
 	}
 
 	void Bresenham(int x0, int y0, int x1, int y1) {
-		x0 = (std::min)((std::max)(0, x0), set.width - 1);
-		x1 = (std::min)((std::max)(0, x1), set.width - 1);
-		y0 = (std::min)((std::max)(0, y0), set.height - 1);
-		y1 = (std::min)((std::max)(0, y1), set.height - 1);
+		x0 = (std::min)((std::max)(0, x0), w - 1);
+		x1 = (std::min)((std::max)(0, x1), w - 1);
+		y0 = (std::min)((std::max)(0, y0), h - 1);
+		y1 = (std::min)((std::max)(0, y1), h - 1);
 		bool steep = abs(y1 - y0) > abs(x1 - x0);
 		if (steep) {
 			std::swap(x0, y0);
@@ -113,8 +120,8 @@ public:
 		int ystep = y0 < y1 ? 1 : -1;
 		int y = y0;
 		for (int x = x0; x <= x1; x++) {
-			if (steep)drawPixel(x * set.width + y, { 100,100,100 });
-			else drawPixel(y * set.width + x, { 100,100,100 });
+			if (steep)drawPixel(x * w + y, { 100,100,100 });
+			else drawPixel(y * w + x, { 100,100,100 });
 			error -= dy;
 			if (error < 0) {
 				y += ystep;
@@ -137,27 +144,27 @@ public:
 	void blend() {
 		auto blendTask = [&](int st, int ed) {
 			for (int cy = st; cy < ed; cy++) {
-				for (int cx = 0; cx < set.width / set.cWidth; cx++) {
+				for (int cx = 0; cx < w / cW; cx++) {
 					
 					float val = 0;
-					for (int i = 0; i < set.cHeight; i++) {
-						for (int j = 0; j < set.cWidth; j++) {
+					for (int i = 0; i < cH; i++) {
+						for (int j = 0; j < cW; j++) {
 
-							int y = cy * set.cHeight + i, x = cx * set.cWidth + j;
-							int pid = (set.height - (y + 1)) * set.width + x;
+							int y = cy * cH + i, x = cx * cW + j;
+							int pid = (h - (y + 1)) * w + x;
 							val += (GetRValue(buffer[pid]) + GetGValue(buffer[pid]) + GetBValue(buffer[pid]));
 						}
 					}
 
-					int level = val * brush[brightness][0] / 3.f / 256 / set.cHeight / set.cWidth;
-					cBuffer[cy * (set.width / set.cWidth + 1) + cx] = brush[brightness][level + 1];
+					int level = val * brush[brightness][0] / 3.f / 256 / cH / cW;
+					cBuffer[cy * (w / cW + 1) + cx] = brush[brightness][level + 1];
 				}
-				cBuffer[cy * (set.width / set.cWidth + 1) + set.width / set.cWidth] = '\n';
+				cBuffer[cy * (w / cW + 1) + w / cW] = '\n';
 			}
 			};
 
-		int num = set.height / set.cHeight;
-		int blockSize = std::clamp(num / (8 * set.numCalculatingThreads), 32 / set.cHeight, 512 / set.cHeight);
+		int num = h / cH;
+		int blockSize = std::clamp(num / (8 * threads.numThreads()), 32 / cH, 512 / cH);
 
 		for (int i = 0; i < num; i += blockSize) {
 			threads.addTask(blendTask, i, (std::min)(i + blockSize, num));
@@ -169,11 +176,11 @@ public:
 	void blendDebugInfo(const std::string& str) {
 
 		int line = 0;
-		char* p = cBuffer + line++ * (set.width / set.cWidth + 1);
+		char* p = cBuffer + line++ * (w / cW + 1);
 		for (const char& c : str) {
 			if (c != '\n') *p++ = c;
-			else p = cBuffer + line++ * (set.width / set.cWidth + 1);
-			if (line >= set.height / set.cHeight)break;
+			else p = cBuffer + line++ * (w / cW + 1);
+			if (line >= h / cH)break;
 		}
 	}
 

@@ -8,7 +8,7 @@
 #include <condition_variable>
 
 class ThreadPool {
-	int numThreads;
+	int _numThreads;
 	std::vector<std::thread> threads;
 	std::queue<std::function<void()>> tasks;
 	std::mutex mtx;
@@ -20,7 +20,7 @@ class ThreadPool {
 
 public:
 
-	ThreadPool(int numThreads) :numThreads(numThreads) {
+	ThreadPool(int numThreads) :_numThreads(numThreads) {
 		for (int i = 0; i < numThreads; i++) {
 			threads.emplace_back([this, i] {
 				while (true) {
@@ -47,9 +47,13 @@ public:
 		mtx.unlock();
 
 		condition.notify_all();
-		for (int i = 0; i < numThreads; i++) {
+		for (int i = 0; i < _numThreads; i++) {
 			threads[i].join();
 		}
+	}
+
+	int numThreads() {
+		return _numThreads;
 	}
 
 	template<class F, class ...Args>

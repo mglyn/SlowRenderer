@@ -49,39 +49,44 @@ public:
 		state ^= op;
 	}
 
-	void updateAtiitude() {
+	void updateAtiitude(float timeElapsed) {
 		if (state == Actions::none) return;
 
 		auto Rodrigues = [](const Math::vec3& k, const Math::vec3& v, float theta)->Math::vec3 {
 			return (v * cosf(theta) + k.cross(v) * sinf(theta) + k * (k.dot(v) * (1.f - cosf(theta)))).normalized();
 			};
 
-		Math::vec3 Actions = Math::vec3{ g[0], 0, g[2] }.normalized();
-		Math::vec3 vActions = Actions.cross(Math::vec3{ 0,1,0 });
-		if (state & Actions::moveForward) wPos = wPos + speed * Actions;
-		if (state & Actions::moveBack) wPos = wPos - speed * Actions;
-		if (state & Actions::moveLeft) wPos = wPos - speed * vActions;
-		if (state & Actions::moveRight) wPos = wPos + speed * vActions;
-		if (state & Actions::moveUp) wPos = wPos + speed * up;
-		if (state & Actions::moveDown) wPos = wPos - speed * up;
+		Math::vec3 vforward = Math::vec3{ g[0], 0, g[2] }.normalized();    
+		Math::vec3 vright = vforward.cross(Math::vec3{ 0,1,0 });       
+		Math::vec3 xforward = speed * timeElapsed * vforward;
+		Math::vec3 xright = speed * timeElapsed * vright;
+		Math::vec3 vup = Math::vec3{ 0,1,0 };
+		Math::vec3 xup = speed * timeElapsed * vup;
+		if (state & Actions::moveForward) wPos = wPos + xforward;
+		if (state & Actions::moveBack) wPos = wPos - xforward;
+		if (state & Actions::moveLeft) wPos = wPos - xright;
+		if (state & Actions::moveRight) wPos = wPos + xright;
+		if (state & Actions::moveUp) wPos = wPos + xup;
+		if (state & Actions::moveDown) wPos = wPos - xup;
 
 		Math::vec3 gxup = g.cross(up);
+		float arcx = rspeed * timeElapsed;
 		if (state & Actions::turnUp) {
-			g = Rodrigues(gxup, g, rspeed);
-			up = Rodrigues(gxup, up, rspeed);
+			g = Rodrigues(gxup, g, arcx);
+			up = Rodrigues(gxup, up, arcx);
 		}
 		if (state & Actions::turnDown) {
-			g = Rodrigues(gxup, g, -rspeed);
-			up = Rodrigues(gxup, up, -rspeed);
+			g = Rodrigues(gxup, g, -arcx);
+			up = Rodrigues(gxup, up, -arcx);
 
 		}
 		if (state & Actions::turnLeft) {
-			g = Rodrigues({ 0, 1, 0 }, g, rspeed);
-			up = Rodrigues({ 0, 1, 0 }, up, rspeed);
+			g = Rodrigues({ 0, 1, 0 }, g, arcx);
+			up = Rodrigues({ 0, 1, 0 }, up, arcx);
 		}
 		if (state & Actions::turnRight) {
-			g = Rodrigues({ 0, 1, 0 }, g, -rspeed);
-			up = Rodrigues({ 0, 1, 0 }, up, -rspeed);
+			g = Rodrigues({ 0, 1, 0 }, g, -arcx);
+			up = Rodrigues({ 0, 1, 0 }, up, -arcx);
 		}
 	}
 
@@ -120,16 +125,24 @@ class Camera :public Object {
 	friend class FragmentShader;
 	friend class Renderer;
 
-	const Setting& set;
+	float fov;
+	float aspect;
+	float zFar;
+	float zNear;
 
 public:
-	Camera(Object object, const Setting& setting) : Object(object), set(setting) {}
+	Camera(Object object, float fov, float aspect, float zFar, float zNear) : 
+		Object(object), 
+		fov(fov),
+		aspect(aspect),
+		zFar(zFar),
+		zNear(zNear){}
 
 	Math::mat4 calcMatrixP() const {
-		float n = set.zNear, f = set.zFar;
-		float t = abs(n) * tanf(set.fov / 2.f);
+		float n = zNear, f = zFar;
+		float t = abs(n) * tanf(fov / 2.f);
 		float b = -t;
-		float r = t * set.aspect;
+		float r = t * aspect;
 		float l = -r;
 		/*viewToProjection
 		Math::mat4 squeeze:		Math::mat4 translate:		Math::mat4 scale:

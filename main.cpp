@@ -6,78 +6,192 @@
 #include <cassert>
 #include "Renderer.h"
 
+struct Setting {
+	int width;
+	int height;
+	int cWidth;
+	int cHeight;
+
+	float fov;
+	float aspect;
+	float zNear;
+	float zFar;
+
+	bool showInfo;
+
+	int numCalculatingThreads;
+
+	Mode mode;
+	bool backfaceCulling;
+
+	std::string debugInfo() const {
+		char str[512];
+		sprintf(str,
+			R"(
+resolution: %dx%d
+super sampling: %dx%d
+
+threads: %d
+
+backface culling: %s [ B ]
+color mod: %s [ 1/2/3 ]
+
+camera attributes:
+FOV: %.2f
+aspect: %.2f
+zNear: %.2f
+zFar: %.2f
+)",
+width / cWidth, height / cHeight,
+width, height,
+numCalculatingThreads,
+backfaceCulling ? "enabled" : "disabled",
+[this]()->const char* {
+				if (mode == Mode::PhongShading)
+					return { "1.Blinn-Phong shading" };
+				else if (mode == Mode::zColoring)
+					return { "2.depth" };
+				else if (mode == Mode::framework)
+					return { "3.framework" };
+				return {};
+			}(), fov, aspect, zNear, zFar);
+
+		return std::string(str);
+	}
+};
+
+void renderingLoop(Canvas& canvas,
+	const Camera& camera,
+	const Model& model,
+	const std::vector<Light>& light,
+	const Math::vec3& amb_light,
+	const Setting& set,
+	bool& update,
+	const bool& shutdown)
+{
+	Renderer renderer(canvas,
+		set.numCalculatingThreads,
+		set.backfaceCulling,
+		set.mode);
+
+	int frameCnt = 0, fps = 0;
+	std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
+	while (!shutdown) {
+
+		/*while (!update && !shutdown) {
+			std::mutex mtx;
+			mtx.lock();
+			mtx.unlock();
+		}
+		update = false;*/
+
+		//1.
+		renderer.draw(camera, model, light, amb_light);
+
+		//2.calculate fps
+		frameCnt++;
+		std::chrono::duration<double, std::milli> delta = std::chrono::system_clock::now() - now;
+		if (delta.count() > 500) {
+			now = std::chrono::system_clock::now();
+			fps = 2 * frameCnt;
+			frameCnt = 0;
+		}
+
+		//3.blend pixels to char
+		canvas.blend();
+
+		//4.debug info
+		std::string debug
+			= "\nfps: " + std::to_string(fps) + "\n" +
+			"[ F ] hide\n" + 
+			"[ W/A/S/D/DIR ] move camera";
+		if (set.showInfo) {
+			debug +=
+				set.debugInfo() +
+				camera.debugInfo() +
+				model.debugInfo();
+		}
+		canvas.blendDebugInfo(debug);
+
+		//5.show buffer to screen
+		canvas.display();
+	}
+}
+
+
 int main() {
 
-	HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
-	DWORD mode;
-	GetConsoleMode(hStdin, &mode);
-	mode &= ~ENABLE_QUICK_EDIT_MODE;
-	mode &= ~ENABLE_INSERT_MODE;
-	mode &= ~ENABLE_MOUSE_INPUT;
-	SetConsoleMode(hStdin, mode);
-	CONSOLE_CURSOR_INFO cur = { 1,0 };
-	SetConsoleCursorInfo(GetStdHandle(STD_OUTPUT_HANDLE), &cur);
+	Setting set;
+	set.backfaceCulling = true;
+	set.mode = Mode::PhongShading;
 
-	Setting setting;
-	setting.backfaceCulling = true;
-	setting.bgColor = { 0.08,0,0.07 };
-	setting.textColor = { 0.6,0.6,0.6 };
-	setting.mod = Setting::Mod::PhongShading;
+	set.width = 178 * 4;
+	set.height = 100 * 4;
+	set.cWidth = 4;
+	set.cHeight = 8;
 
-	setting.width = 280 * 4;
-	setting.height = 156 * 4;
-	setting.cWidth = 4;
-	setting.cHeight = 8;
+	assert(set.height % set.cHeight == 0 && set.width % set.cWidth == 0);
 
-	assert(setting.height % setting.cHeight == 0 && setting.width % setting.cWidth == 0);
+	set.fov = 0.4 * Math::pi;
+	set.aspect = (float)set.width / set.height;
+	set.zFar = -50.f;
+	set.zNear = -0.1f;
 
-	setting.fov = 0.4 * Math::pi;
-	setting.aspect = (float)setting.width / setting.height;
-	setting.zFar = -50.f;
-	setting.zNear = -0.1f;
+	set.numCalculatingThreads = std::clamp((int)std::thread::hardware_concurrency(), 1, 16);
 
-	setting.numCalculatingThreads = 16;
+	set.showInfo = true;
 
-	setting.showInfo = false;
 
 	Camera camera(Object(
 		{ 0,0,2 },   //world coord
 		{ 0,0,-1 },  //towarding 
 		{ 0,1,0 },   //up
 		0,			 //actions
-		0.01,  		 //speed
-		0.01),		 //rotation speed
-		setting);   	 
+		2,  		 //speed
+		Math::pi / 2.f),		 //rotation speed
+		set.fov,
+		set.aspect,
+		set.zFar,
+		set.zNear);   	 
 
-	Model model(Object({ 0,0,0 }, { 0,0,-1 }, { 0,1,0 }, Actions::turnLeft, 0, 0.005),
+	Model model(Object({ 0,0,0 }, { 0,0,-1 }, { 0,1,0 }, Actions::turnLeft, 0, Math::pi / 3),
 		Matirial(
 			{ 0.005, 0.005, 0.005 },  //kambient
 			{ 0.8, 0.86, 0.88 },      //kdiffuse
-			{ 0.2, 0.2, 0.2 }));      //kspecular
+			{ 0.4, 0.4, 0.4 }));      //kspecular
 
-	model.loadOBJ("models", "dragon.obj");
+	model.loadOBJ("models", "dog.obj");
 
 	std::vector<Light> light;   //point light source
 	light.push_back({
-		{0,20,0}, 				//world coord
-	{400,400,400} });			//rgb intensity
-	light.push_back({ {20,0,20},{100,100,100} });
+		{0,15,0}, 				//world coord
+	{500,500,500} });			//rgb intensity
+	light.push_back({ {10,-3,10},{100,100,100} });
 
 	Math::vec3 amb_light{ 5,5,5 }; //ambient light intensity
 
-	Canvas canvas(setting);
-
-	Renderer renderer(setting);
+	Canvas canvas(set.width,
+		set.height,
+		set.cWidth,
+		set.cHeight,
+		set.numCalculatingThreads,
+		{ 0,0,0 }); //bgColor
 	
+	bool renderRequest = true;
 	bool shutdown = false;
 
 	// rendering loop
-	std::jthread renderThread(&Renderer::renderingLoop, &renderer, std::ref(canvas), 
-		std::ref(camera), std::ref(model), std::ref(light), std::ref(amb_light), std::ref(shutdown));
+	std::jthread renderThread(renderingLoop, std::ref(canvas),std::ref(camera), 
+		std::ref(model), std::ref(light), std::ref(amb_light), 
+		std::ref(set), std::ref(renderRequest), std::ref(shutdown));
 
-	// msg loop
+	// logic loop
 	std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
 	while (true) {
+
+		std::chrono::duration<double, std::milli> delta = std::chrono::system_clock::now() - now;
+		now = std::chrono::system_clock::now();
+
 		camera.setState(!(GetKeyState('W') & 0x8000), Actions::moveForward);
 		camera.setState(!(GetKeyState('A') & 0x8000), Actions::moveLeft);
 		camera.setState(!(GetKeyState('S') & 0x8000), Actions::moveBack);
@@ -98,31 +212,24 @@ int main() {
 			shutdown = false;
 
 			if (GetKeyState('1') & 0x8000)
-				setting.mod = Setting::Mod::PhongShading;
+				set.mode = Mode::PhongShading;
 			if (GetKeyState('2') & 0x8000)
-				setting.mod = Setting::Mod::zColoring;
+				set.mode = Mode::zColoring;
 			if (GetKeyState('3') & 0x8000)
-				setting.mod = Setting::Mod::framework;
+				set.mode = Mode::framework;
 
 			if (GetKeyState('B') & 0x8000)
-				setting.backfaceCulling = GetKeyState('B') & 1;
+				set.backfaceCulling = GetKeyState('B') & 1;
 
 			if (GetKeyState('F') & 0x8000)
-				setting.showInfo = GetKeyState('F') & 1;
+				set.showInfo = GetKeyState('F') & 1;
 
-			renderThread = std::jthread(&Renderer::renderingLoop, &renderer, std::ref(canvas),
-				std::ref(camera), std::ref(model), std::ref(light), std::ref(amb_light), std::ref(shutdown));
+			renderThread = std::jthread(renderingLoop, std::ref(canvas),std::ref(camera), 
+				std::ref(model), std::ref(light), std::ref(amb_light), 
+				std::ref(set), std::ref(renderRequest), std::ref(shutdown));
 		}
 
-		std::chrono::duration<double, std::milli> delta = std::chrono::system_clock::now() - now;
-		now = std::chrono::system_clock::now();
-		if (delta.count() < 6.944) {  //144 logic fps
-			std::chrono::duration<double, std::milli> delta_ms(6.944 - delta.count());
-			auto delta_ms_duration = std::chrono::duration_cast<std::chrono::milliseconds>(delta_ms);
-			std::this_thread::sleep_for(std::chrono::milliseconds(delta_ms_duration.count()));
-		}
-
-		camera.updateAtiitude();
-		model.updateAtiitude();
+		camera.updateAtiitude(delta.count() / 1000.f);
+		model.updateAtiitude(delta.count() / 1000.f);
 	}
 }

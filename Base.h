@@ -3,67 +3,6 @@
 #include <vector>
 #include <string>
 
-struct Setting {
-	int width;
-	int height;
-	int cWidth;
-	int cHeight;
-
-	float fov;
-	float aspect;
-	float zNear;
-	float zFar;
-
-	bool showInfo;
-
-	int numCalculatingThreads;
-
-	Math::vec3 bgColor;
-	Math::vec3 textColor;
-
-	enum class Mod {
-		PhongShading,
-		zColoring,
-		framework
-	};
-
-	Mod mod;
-	bool backfaceCulling;
-
-	std::string debugInfo() const {
-		char str[512];
-		sprintf(str,
-			R"(
-resolution: %dx%d
-super sampling: %dx%d
-
-backface culling: %s [ B ]
-color mod: %s [ 1/2/3 ]
-
-[ W/A/S/D/DIR ] to move camera
-camera attributes:
-FOV: %.2f
-aspect: %.2f
-zNear: %.2f
-zFar: %.2f
-)",
-width / cWidth, height / cHeight,
-width, height,
-backfaceCulling ? "enabled" : "disabled",
-[this]()->const char* {
-				if (mod == Setting::Mod::PhongShading)
-					return { "1.Blinn-Phong shading" };
-				else if (mod == Setting::Mod::zColoring)
-					return { "2.depth" };
-				else if (mod == Setting::Mod::framework)
-					return { "3.framework" };
-				return {};
-			}(), fov, aspect, zNear, zFar);
-
-		return std::string(str);
-	}
-};
-
 //{ vertex1{ posID, texCoordID, normalID}, vertex2{}, vertex3{} }
 using Ind = std::vector<std::vector<int>>;
 

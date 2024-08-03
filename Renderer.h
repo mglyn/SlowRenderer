@@ -77,8 +77,14 @@ public:
 	}
 };
 
+enum class Mode {
+	PhongShading,
+	zColoring,
+	framework
+};
+
 class Renderer {
-	const Setting& set;
+	Canvas& canvas;
 
 	Math::mat4 M, invTransM, PV;
 
@@ -95,25 +101,28 @@ class Renderer {
 	ThreadPool threads;
 	std::mutex mtx;
 
+	bool backfaceCulling;
+	Mode renderMode;
+
 	void updateMatrix(const Camera& camera, const Model& model) {
 		M = model.calcMatrixM();
 		invTransM = M.inverse().transpose();
 		PV = camera.calcMatrixP() * camera.calcMatrixV();
 	}
 
-	void clear(Canvas& canvas) {
+	void clear() {
 		auto clearTask = [&](int st, int ed) {
 			for (int y = st; y < ed; y++) {
-				for (int x = 0; x < set.width; x++) {
-					int pid = y * set.width + x;
-					canvas.drawPixel(pid, set.bgColor);
+				for (int x = 0; x < canvas.w; x++) {
+					int pid = y * canvas.w + x;
+					canvas.drawPixel(pid, canvas.bgColor);
 					depthBuf[pid] = -1e8;
 				}
 			}
 			};
 
-		int num = set.height;
-		int blockSize = (std::max)((std::min)(num / (8 * set.numCalculatingThreads), 512), 1);
+		int num = canvas.h;
+		int blockSize = (std::max)((std::min)(num / (8 * threads.numThreads()), 512), 1);
 
 		for (int i = 0; i < num; i += blockSize) {
 			threads.addTask(clearTask, i, (std::min)(i + blockSize, num));
@@ -142,7 +151,7 @@ class Renderer {
 			};
 
 		int num = model.mesh.mPos.size();
-		int blockSize = std::clamp(num / (8 * set.numCalculatingThreads), 32, 512);
+		int blockSize = std::clamp(num / (8 * threads.numThreads()), 32, 512);
 
 		for (int i = 0; i < num; i += blockSize) {
 			threads.addTask(vertexProcessTask1, i, (std::min)(i + blockSize, num));
@@ -158,7 +167,7 @@ class Renderer {
 			};
 
 		num = model.mesh.mNormal.size();
-		blockSize = std::clamp(num / (8 * set.numCalculatingThreads), 32, 512);
+		blockSize = std::clamp(num / (8 * threads.numThreads()), 32, 512);
 
 		for (int i = 0; i < num; i += blockSize) {
 			threads.addTask(vertexProcessTask2, i, (std::min)(i + blockSize, num));
@@ -205,7 +214,7 @@ class Renderer {
 		return triangles;
 	}
 
-	void setup_rasterize_triangle(Canvas& canvas, const Camera& camera, const Model& model) {
+	void setup_rasterize_triangle(const Camera& camera, const Model& model) {
 		auto setup_rasterize_triangle_task = [&](int st, int ed) {
 			TempFragBuffer buf(fragment, depthBuf, mtx);
 
@@ -221,7 +230,7 @@ class Renderer {
 				}
 
 				//2 clip origin triangle
-				std::vector<Triangle> triangles = clipTriangle(t, set.zNear);
+				std::vector<Triangle> triangles = clipTriangle(t, camera.zNear);
 
 				//3 apply perspective division and viewport transform to get screen space coord
 				for (auto& t : triangles) {
@@ -230,23 +239,23 @@ class Renderer {
 						t.ver[i].cPos[1] /= t.ver[i].cPos[3];
 					}
 					for (int i = 0; i < 3; i++) {
-						t.ver[i].sPos[0] = 0.5f * set.width * (t.ver[i].cPos[0] + 1.f);
-						t.ver[i].sPos[1] = 0.5f * set.height * (t.ver[i].cPos[1] + 1.f);
+						t.ver[i].sPos[0] = 0.5f * canvas.w * (t.ver[i].cPos[0] + 1.f);
+						t.ver[i].sPos[1] = 0.5f * canvas.h * (t.ver[i].cPos[1] + 1.f);
 					}
 
 					float area = (t.ver[0].sPos[0] - t.ver[1].sPos[0]) * (t.ver[1].sPos[1] - t.ver[2].sPos[1]) -
 						(t.ver[1].sPos[0] - t.ver[2].sPos[0]) * (t.ver[0].sPos[1] - t.ver[1].sPos[1]);
 
-					if (set.backfaceCulling && area < 0) continue;	//backface culling
+					if (backfaceCulling && area < 0) continue;	//backface culling
 
-					if (set.mod == Setting::Mod::framework) canvas.drawTriangleFrame(t);
-					else halfSpaceRasterize(canvas, t, area, buf);
+					if (renderMode == Mode::framework) canvas.drawTriangleFrame(t); 
+					else halfSpaceRasterize(t, area, buf);
 				}
 			}
 			};
 
 		int num = model.mesh.tInfo.size();
-		int blockSize = std::clamp(num / (8 * set.numCalculatingThreads), 32, 512);
+		int blockSize = std::clamp(num / (8 * threads.numThreads()), 32, 512);
 
 		for (int i = 0; i < num; i += blockSize) {
 			threads.addTask(setup_rasterize_triangle_task, i, (std::min)(i + blockSize, num));
@@ -255,12 +264,12 @@ class Renderer {
 		threads.barrier();
 	}
 
-	void halfSpaceRasterize(Canvas& canvas, Triangle& t, float area, TempFragBuffer& buf) {
+	void halfSpaceRasterize(Triangle& t, float area, TempFragBuffer& buf) {
 		//bounding box
-		int lbound = (std::min)((std::max)((std::min)((std::min)(t.ver[0].sPos[0], t.ver[1].sPos[0]), t.ver[2].sPos[0]), 0.f), float(set.width - 1));
-		int rbound = (std::min)((std::max)((std::max)((std::max)(t.ver[0].sPos[0], t.ver[1].sPos[0]), t.ver[2].sPos[0]), 0.f), float(set.width - 1));
-		int bbound = (std::min)((std::max)((std::min)((std::min)(t.ver[0].sPos[1], t.ver[1].sPos[1]), t.ver[2].sPos[1]), 0.f), float(set.height - 1));
-		int tbound = (std::min)((std::max)((std::max)((std::max)(t.ver[0].sPos[1], t.ver[1].sPos[1]), t.ver[2].sPos[1]), 0.f), float(set.height - 1));
+		int lbound = (std::min)((std::max)((std::min)((std::min)(t.ver[0].sPos[0], t.ver[1].sPos[0]), t.ver[2].sPos[0]), 0.f), float(canvas.w - 1));
+		int rbound = (std::min)((std::max)((std::max)((std::max)(t.ver[0].sPos[0], t.ver[1].sPos[0]), t.ver[2].sPos[0]), 0.f), float(canvas.w - 1));
+		int bbound = (std::min)((std::max)((std::min)((std::min)(t.ver[0].sPos[1], t.ver[1].sPos[1]), t.ver[2].sPos[1]), 0.f), float(canvas.h - 1));
+		int tbound = (std::min)((std::max)((std::max)((std::max)(t.ver[0].sPos[1], t.ver[1].sPos[1]), t.ver[2].sPos[1]), 0.f), float(canvas.h - 1));
 		if (lbound > rbound)return;
 
 		for (int y = bbound; y <= tbound; y++) {
@@ -284,7 +293,7 @@ class Renderer {
 				}
 				met = true;
 
-				int pid = y * set.width + x;
+				int pid = y * canvas.w + x;
 
 				//corrected interpolation 
 				float alpha = S[1] / area, beta = S[2] / area, gama = S[0] / area;
@@ -303,9 +312,9 @@ class Renderer {
 		}
 	}
 
-	void fragmentProcess(Canvas& canvas, const FragmentShader& fragmentShader) {
+	void fragmentProcess(const FragmentShader& fragmentShader) {
 		std::function<void(int, int)> fragmentShadingTask;
-		if (set.mod == Setting::Mod::PhongShading) {
+		if (renderMode == Mode::PhongShading) {
 			fragmentShadingTask = [&](int st, int ed) {
 				for (int id = st; id < ed; id++) {
 					auto& f = fragment[id];
@@ -315,7 +324,7 @@ class Renderer {
 				}
 				};
 		}
-		else if (set.mod == Setting::Mod::zColoring) {
+		else if (renderMode == Mode::zColoring) {
 			fragmentShadingTask = [&](int st, int ed) {
 				for (int id = st; id < ed; id++) {
 					auto& f = fragment[id];
@@ -328,7 +337,7 @@ class Renderer {
 		}
 
 		int num = fragment.size();
-		int blockSize = std::clamp(num / (8 * set.numCalculatingThreads), 32, 512);
+		int blockSize = std::clamp(num / (8 * threads.numThreads()), 32, 512);
 
 		for (int i = 0; i < fragment.size(); i += blockSize) {
 			threads.addTask(fragmentShadingTask, i, (int)(std::min)(i + blockSize, (int)fragment.size()));
@@ -338,17 +347,17 @@ class Renderer {
 	}
 
 public:
-	Renderer(const Setting& setting) :threads(setting.numCalculatingThreads), set(setting) {}
+	Renderer(Canvas& canvas, int numThreads, bool backfaceCulling, Mode renderMode) : 
+		canvas(canvas), threads(numThreads), backfaceCulling(backfaceCulling), renderMode(renderMode){}
 
-	void draw(Canvas& canvas,
-		const Camera& camera,
+	void draw(const Camera& camera,
 		const Model& model,
 		const std::vector<Light>& light,
 		const Math::vec3& amb_light)
 	{
 		//1.init
-		depthBuf.resize(set.width * set.height);
-		clear(canvas);
+		depthBuf.resize(canvas.w * canvas.h);
+		clear();
 
 		//2.���¾���
 		updateMatrix(camera, model);
@@ -357,54 +366,11 @@ public:
 		vertexProcess(model);
 
 		//4.��װ����դ��������
-		setup_rasterize_triangle(canvas, camera, model);
+		setup_rasterize_triangle(camera, model);
 
 		//5.��Ⱦ����
 		FragmentShader fragmentShader(model.mtl, camera, light, amb_light);
-		fragmentProcess(canvas, fragmentShader);
-	}
-
-	void renderingLoop(Canvas& canvas,
-		const Camera& camera,
-		const Model& model,
-		const std::vector<Light>& light,
-		const Math::vec3& amb_light,
-		const bool& shutdown) 
-	{
-		int frameCnt = 0, fps = 0;
-		std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
-		while (!shutdown) {
-
-			//1.
-			draw(canvas, camera, model, light, amb_light);
-
-			//2.calculate fps
-			frameCnt++;
-			std::chrono::duration<double, std::milli> delta = std::chrono::system_clock::now() - now;
-			if (delta.count() > 500) {
-				now = std::chrono::system_clock::now();
-				fps = 2 * frameCnt;
-				frameCnt = 0;
-			}
-
-			//3.blend pixels to char
-			canvas.blend();
-
-			//4.debug info
-			std::string debug
-				= "\nfps: " + std::to_string(fps) + "\n" +
-				"[ F ] for more info";
-			if (set.showInfo) {
-				debug +=
-					set.debugInfo() +
-					camera.debugInfo() +
-					model.debugInfo();
-			}
-			canvas.blendDebugInfo(debug);
-
-			//5.show buffer to screen
-			canvas.display();
-		}
+		fragmentProcess(fragmentShader);
 	}
 };
 
